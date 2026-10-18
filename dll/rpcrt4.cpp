@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <random>
 #include <string>
 #include <unordered_map>
 
@@ -238,6 +239,25 @@ CLIENT_CALL_RETURN CDECL_NO_CONV NdrClientCall2(PMIDL_STUB_DESC stubDescriptor, 
 VOID WINAPI NdrServerCall2(PRPC_MESSAGE message) {
 	HOST_CONTEXT_GUARD();
 	DEBUG_LOG("STUB: NdrServerCall2 message=%p\n", message);
+}
+
+RPC_STATUS WINAPI UuidCreate(GUID *uuid) {
+	HOST_CONTEXT_GUARD();
+	DEBUG_LOG("UuidCreate(%p)\n", uuid);
+	if (!uuid) {
+		return RPC_S_INVALID_ARG;
+	}
+	// Random (version 4, RFC 4122 variant) GUID.
+	std::random_device rd;
+	uint8_t bytes[sizeof(GUID)];
+	for (size_t i = 0; i < sizeof(bytes); i += sizeof(uint32_t)) {
+		uint32_t word = rd();
+		std::memcpy(bytes + i, &word, sizeof(word));
+	}
+	std::memcpy(uuid, bytes, sizeof(GUID));
+	uuid->Data3 = static_cast<WORD>((uuid->Data3 & 0x0FFF) | 0x4000);
+	uuid->Data4[0] = static_cast<BYTE>((uuid->Data4[0] & 0x3F) | 0x80);
+	return RPC_S_OK;
 }
 
 } // namespace rpcrt4
