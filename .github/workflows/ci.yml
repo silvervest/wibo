@@ -222,5 +222,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/out/*
-          draft: true
+          # published, not a draft: decompdecomp's toolchains.toml downloads wibo-x86_64 from this release
+          draft: false
           generate_release_notes: true
