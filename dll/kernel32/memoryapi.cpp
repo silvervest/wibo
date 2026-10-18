@@ -393,11 +393,18 @@ static LPVOID mapViewOfFileInternal(Pin<MappingObject> mapping, DWORD dwDesiredA
 			return nullptr;
 		}
 		requestedBase = reinterpret_cast<void *>(mapBaseAddr);
-#ifdef MAP_FIXED_NOREPLACE
-		mapFlags |= MAP_FIXED_NOREPLACE;
-#else
+		// Track the range, like the non-fixed case below. The requested range is typically one the caller just
+		// released with VirtualFree (Link.Exe probes for free space that way), which wibo leaves mapped as a
+		// PROT_NONE placeholder: the claim fails if the guest still has something there, so MAP_FIXED is safe.
+		wibo::heap::VmStatus claimStatus = wibo::heap::reserveViewRangeAt(requestedBase, mapLength);
+		if (claimStatus != wibo::heap::VmStatus::Success) {
+			setLastError(claimStatus == wibo::heap::VmStatus::InvalidParameter
+							 ? ERROR_INVALID_PARAMETER
+							 : ERROR_INVALID_ADDRESS);
+			return nullptr;
+		}
+		reservedMapping = true;
 		mapFlags |= MAP_FIXED;
-#endif
 	} else {
 		void *candidate = nullptr;
 		wibo::heap::VmStatus reserveStatus = wibo::heap::reserveViewRange(mapLength, 0, 0, &candidate);

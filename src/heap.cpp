@@ -1203,6 +1203,29 @@ VmStatus reserveViewRange(std::size_t regionSize, uintptr_t minAddr, uintptr_t m
 	return VmStatus::Success;
 }
 
+// Claims a caller-chosen address range for a file view. Released VirtualAlloc ranges stay mapped as PROT_NONE
+// placeholders, so the caller must map over them with MAP_FIXED once this succeeds.
+VmStatus reserveViewRangeAt(void *baseAddress, std::size_t regionSize) {
+	if (!baseAddress || regionSize == 0) {
+		return VmStatus::InvalidParameter;
+	}
+	const uintptr_t pageSize = wibo::heap::systemPageSize();
+	const uintptr_t base = reinterpret_cast<uintptr_t>(baseAddress);
+	const std::size_t aligned = static_cast<std::size_t>(alignUp(static_cast<uintptr_t>(regionSize), pageSize));
+	if (aligned == 0 || addOverflows(base, aligned)) {
+		return VmStatus::InvalidParameter;
+	}
+	if (base >= kTwoGB || (base + aligned) > kTwoGB) {
+		return VmStatus::InvalidAddress;
+	}
+	std::lock_guard allocLock(g_mappingsMutex);
+	if (overlapsExistingMappingLocked(base, aligned)) {
+		return VmStatus::InvalidAddress;
+	}
+	recordGuestMappingLocked(base, aligned, PAGE_NOACCESS, MEM_RESERVE, PAGE_NOACCESS, MEM_MAPPED);
+	return VmStatus::Success;
+}
+
 void registerViewRange(void *baseAddress, std::size_t regionSize, DWORD allocationProtect, DWORD protect) {
 	if (!baseAddress) {
 		return;

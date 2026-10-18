@@ -80,6 +80,7 @@ VmStatus virtualQuery(const void *address, MEMORY_BASIC_INFORMATION *outInfo);
 VmStatus virtualReset(void *baseAddress, std::size_t regionSize);
 
 VmStatus reserveViewRange(std::size_t regionSize, uintptr_t minAddr, uintptr_t maxAddr, void **baseAddress);
+VmStatus reserveViewRangeAt(void *baseAddress, std::size_t regionSize);
 void registerViewRange(void *baseAddress, std::size_t regionSize, DWORD allocationProtect, DWORD protect);
 void releaseViewRange(void *baseAddress);
 
