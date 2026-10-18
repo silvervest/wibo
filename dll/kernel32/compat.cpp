@@ -148,7 +148,11 @@ BOOL WINAPI CopyFileA(LPCSTR lpExistingFileName, LPCSTR lpNewFileName, BOOL bFai
 		setLastErrorFromErrno();
 	} else {
 		// Like Windows, keep the source's last-write time so timestamp-driven tools don't see a fresh file.
+#ifdef __APPLE__
+		struct timespec times[2] = {st.st_atimespec, st.st_mtimespec};
+#else
 		struct timespec times[2] = {st.st_atim, st.st_mtim};
+#endif
 		futimens(out, times);
 	}
 	close(in);
