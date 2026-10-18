@@ -5,6 +5,8 @@
 #include "files.h"
 #include "heap.h"
 #include "internal.h"
+#include "libloaderapi.h"
+#include "winbase.h"
 #include "strutil.h"
 #include "types.h"
 
@@ -93,6 +95,36 @@ std::optional<std::string> getEnvValueForWindows(const std::string &name) {
 		return convertEnvValueForWindows(name, rawValue);
 	}
 	return std::nullopt;
+}
+
+// Replaces %NAME% with the variable's value. References to undefined variables are left untouched, as on Windows.
+std::string expandEnvironmentReferences(std::string_view src) {
+	std::string result;
+	size_t pos = 0;
+	while (pos < src.size()) {
+		size_t open = src.find('%', pos);
+		if (open == std::string_view::npos) {
+			break;
+		}
+		size_t close = src.find('%', open + 1);
+		if (close == std::string_view::npos) {
+			break;
+		}
+		result.append(src, pos, open - pos);
+		std::string name(src.substr(open + 1, close - open - 1));
+		std::optional<std::string> value;
+		if (!name.empty()) {
+			value = getEnvValueForWindows(name);
+		}
+		if (value) {
+			result += *value;
+		} else {
+			result.append(src, open, close - open + 1);
+		}
+		pos = close + 1;
+	}
+	result.append(src.substr(pos));
+	return result;
 }
 
 std::vector<std::string> prepareEnvStrings(size_t &totalSize) {
@@ -331,6 +363,125 @@ BOOL WINAPI SetEnvironmentVariableW(LPCWSTR lpName, LPCWSTR lpValue) {
 	std::string name = wideStringToString(lpName);
 	std::string value = lpValue ? wideStringToString(lpValue) : std::string();
 	return SetEnvironmentVariableA(name.c_str(), lpValue ? value.c_str() : nullptr);
+}
+
+DWORD WINAPI ExpandEnvironmentStringsA(LPCSTR lpSrc, LPSTR lpDst, DWORD nSize) {
+	HOST_CONTEXT_GUARD();
+	DEBUG_LOG("ExpandEnvironmentStringsA(%s, %p, %u)\n", lpSrc ? lpSrc : "(null)", lpDst, nSize);
+	if (!lpSrc) {
+		setLastError(ERROR_INVALID_PARAMETER);
+		return 0;
+	}
+	std::string expanded = expandEnvironmentReferences(lpSrc);
+	DWORD required = static_cast<DWORD>(expanded.size() + 1);
+	if (lpDst && nSize >= required) {
+		memcpy(lpDst, expanded.c_str(), required);
+	}
+	return required;
+}
+
+DWORD WINAPI ExpandEnvironmentStringsW(LPCWSTR lpSrc, LPWSTR lpDst, DWORD nSize) {
+	HOST_CONTEXT_GUARD();
+	DEBUG_LOG("ExpandEnvironmentStringsW -> ");
+	if (!lpSrc) {
+		setLastError(ERROR_INVALID_PARAMETER);
+		return 0;
+	}
+	std::string expanded = expandEnvironmentReferences(wideStringToString(lpSrc));
+	auto wide = stringToWideString(expanded.c_str());
+	DWORD required = static_cast<DWORD>(wide.size()); // includes the terminating NUL
+	if (lpDst && nSize >= required) {
+		std::copy(wide.begin(), wide.end(), lpDst);
+	}
+	return required;
+}
+
+DWORD WINAPI SearchPathA(LPCSTR lpPath, LPCSTR lpFileName, LPCSTR lpExtension, DWORD nBufferLength, LPSTR lpBuffer,
+						 GUEST_PTR *lpFilePart) {
+	HOST_CONTEXT_GUARD();
+	DEBUG_LOG("SearchPathA(%s, %s, %s, %u, %p, %p)\n", lpPath ? lpPath : "(null)", lpFileName ? lpFileName : "(null)",
+			  lpExtension ? lpExtension : "(null)", nBufferLength, lpBuffer, lpFilePart);
+	if (!lpFileName || !*lpFileName) {
+		setLastError(ERROR_INVALID_PARAMETER);
+		return 0;
+	}
+
+	std::string name = lpFileName;
+	size_t lastSep = name.find_last_of("\\/");
+	size_t dot = name.find('.', lastSep == std::string::npos ? 0 : lastSep + 1);
+	if (dot == std::string::npos && lpExtension) {
+		name += lpExtension;
+	}
+
+	char cwd[4096];
+	DWORD cwdLen = GetCurrentDirectoryA(sizeof(cwd), cwd);
+	std::string currentDir = cwdLen && cwdLen < sizeof(cwd) ? std::string(cwd, cwdLen) : std::string();
+
+	std::vector<std::string> directories;
+	bool absolute = name[0] == '\\' || name[0] == '/' || (name.size() > 1 && name[1] == ':');
+	if (absolute) {
+		directories.emplace_back();
+	} else {
+		std::string list;
+		if (lpPath) {
+			list = lpPath;
+		} else {
+			// Application directory, current directory, then PATH.
+			char exe[4096];
+			DWORD exeLen = GetModuleFileNameA(NO_HANDLE, exe, sizeof(exe));
+			if (exeLen && exeLen < sizeof(exe)) {
+				std::string exePath(exe, exeLen);
+				size_t sep = exePath.find_last_of("\\/");
+				if (sep != std::string::npos) {
+					list += exePath.substr(0, sep);
+				}
+			}
+			list += ";" + currentDir;
+			if (auto pathValue = getEnvValueForWindows("PATH")) {
+				list += ";" + *pathValue;
+			}
+		}
+		size_t start = 0;
+		while (start <= list.size()) {
+			size_t end = list.find(';', start);
+			if (end == std::string::npos) {
+				end = list.size();
+			}
+			if (end > start) {
+				directories.push_back(list.substr(start, end - start));
+			}
+			start = end + 1;
+		}
+	}
+
+	for (const auto &directory : directories) {
+		std::string candidate = directory;
+		if (!candidate.empty() && candidate.back() != '\\' && candidate.back() != '/') {
+			candidate += '\\';
+		}
+		candidate += name;
+		bool candidateAbsolute =
+			candidate[0] == '\\' || candidate[0] == '/' || (candidate.size() > 1 && candidate[1] == ':');
+		if (!candidateAbsolute && !currentDir.empty()) {
+			candidate = currentDir + "\\" + candidate;
+		}
+		std::error_code ec;
+		if (!std::filesystem::is_regular_file(files::pathFromWindows(candidate.c_str()), ec)) {
+			continue;
+		}
+		DWORD required = static_cast<DWORD>(candidate.size() + 1);
+		if (!lpBuffer || nBufferLength < required) {
+			return required;
+		}
+		memcpy(lpBuffer, candidate.c_str(), required);
+		if (lpFilePart) {
+			size_t sep = candidate.find_last_of("\\/");
+			*lpFilePart = toGuestPtr(lpBuffer + (sep == std::string::npos ? 0 : sep + 1));
+		}
+		return required - 1;
+	}
+	setLastError(ERROR_FILE_NOT_FOUND);
+	return 0;
 }
 
 } // namespace kernel32

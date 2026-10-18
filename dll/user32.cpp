@@ -175,6 +175,16 @@ HWND WINAPI GetActiveWindow() {
 	return NO_HANDLE;
 }
 
+LPSTR WINAPI CharNextA(LPCSTR lpsz) {
+	HOST_CONTEXT_GUARD();
+	VERBOSE_LOG("CharNextA(%p)\n", lpsz);
+	// Single-byte code page only: no lead bytes to skip.
+	if (!lpsz) {
+		return nullptr;
+	}
+	return const_cast<LPSTR>(*lpsz ? lpsz + 1 : lpsz);
+}
+
 } // namespace user32
 
 #include "user32_trampolines.h"

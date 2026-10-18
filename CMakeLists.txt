@@ -197,6 +197,7 @@ add_executable(wibo
     dll/bcrypt.cpp
     dll/kernel32.cpp
     dll/kernel32/debugapi.cpp
+    dll/kernel32/compat.cpp
     dll/kernel32/errhandlingapi.cpp
     dll/kernel32/fibersapi.cpp
     dll/kernel32/fileapi.cpp
@@ -223,6 +224,7 @@ add_executable(wibo
     dll/mscoree.cpp
     dll/ntdll.cpp
     dll/ole32.cpp
+    dll/oleaut32.cpp
     dll/rpcrt4.cpp
     dll/shlwapi.cpp
     dll/user32.cpp
@@ -388,9 +390,11 @@ wibo_codegen_module(NAME ws2 HEADERS dll/ws2.h)
 wibo_codegen_module(NAME vcruntime HEADERS dll/vcruntime.h)
 wibo_codegen_module(NAME lmgr HEADERS dll/lmgr.h)
 wibo_codegen_module(NAME ole32 HEADERS dll/ole32.h)
+wibo_codegen_module(NAME oleaut32 HEADERS dll/oleaut32.h)
 wibo_codegen_module(NAME user32 HEADERS dll/user32.h)
 wibo_codegen_module(NAME ntdll HEADERS dll/ntdll.h)
 wibo_codegen_module(NAME kernel32 HEADERS
+    dll/kernel32/compat.h
     dll/kernel32/debugapi.h
     dll/kernel32/errhandlingapi.h
     dll/kernel32/fibersapi.h
